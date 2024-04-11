@@ -63,8 +63,8 @@ jobs:
       version: ${{ needs.tag.outputs.version }}
       branch: ${{ needs.tag.outputs.branch }}
       artifact-patterns: |
-        ^libzenoh_backend_rocksdb\.(dylib|so)$
-        ^zenoh_backend_rocksdb\.dll$
+        ^libzenoh_backend_sqlite\.(dylib|so)$
+        ^zenoh_backend_sqlite\.dll$
     secrets: inherit
 
   cargo:
@@ -108,9 +108,9 @@ jobs:
       version: ${{ needs.tag.outputs.version }}
       branch: ${{ needs.tag.outputs.branch }}
       artifact-patterns: |
-        ^libzenoh_backend_rocksdb\.dylib$
+        ^libzenoh_backend_sqlite\.dylib$
       formulae: |
-        zenoh-backend-rocksdb
+        zenoh-backend-sqlite
     secrets: inherit
 
   eclipse:
@@ -124,9 +124,9 @@ jobs:
       repo: ${{ github.repository }}
       branch: ${{ needs.tag.outputs.branch }}
       artifact-patterns: |
-        ^libzenoh_backend_rocksdb\.(dylib|so)$
-        ^zenoh_backend_rocksdb\.dll$
-      name: zenoh-backend-rocksdb
+        ^libzenoh_backend_sqlite\.(dylib|so)$
+        ^zenoh_backend_sqlite\.dll$
+      name: zenoh-backend-sqlite
     secrets: inherit
 
   github:
@@ -140,6 +140,6 @@ jobs:
       repo: ${{ github.repository }}
       branch: ${{ needs.tag.outputs.branch }}
       artifact-patterns: |
-        ^libzenoh_backend_rocksdb\.(dylib|so)$
-        ^zenoh_backend_rocksdb\.dll$
+        ^libzenoh_backend_sqlite\.(dylib|so)$
+        ^zenoh_backend_sqlite\.dll$
     secrets: inherit

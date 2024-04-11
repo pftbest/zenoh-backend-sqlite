@@ -1,6 +1,6 @@
 <img src="https://raw.githubusercontent.com/eclipse-zenoh/zenoh/main/zenoh-dragon.png" height="150">
 
-[![CI](https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/workflows/CI/badge.svg)](https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/actions?query=workflow%3A%22CI%22)
+[![CI](https://github.com/eclipse-zenoh/zenoh-backend-sqlite/workflows/CI/badge.svg)](https://github.com/eclipse-zenoh/zenoh-backend-sqlite/actions?query=workflow%3A%22CI%22)
 [![Discussion](https://img.shields.io/badge/discussion-on%20github-blue)](https://github.com/eclipse-zenoh/roadmap/discussions)
 [![Discord](https://img.shields.io/badge/chat-on%20discord-blue)](https://discord.gg/2GJ958VuHs)
 [![License](https://img.shields.io/badge/License-EPL%202.0-blue)](https://choosealicense.com/licenses/epl-2.0/)
@@ -14,14 +14,14 @@ Zenoh (pronounce _/zeno/_) unifies data in motion, data at rest and computations
 Check the website [zenoh.io](http://zenoh.io) and the [roadmap](https://github.com/eclipse-zenoh/roadmap) for more detailed information.
 
 -------------------------------
-# RocksDB backend
+# Sqlite backend
 
 In zenoh a backend is a storage technology (such as DBMS, time-series database, file system...) alowing to store the
 keys/values publications made via zenoh and return them on queries.
 See the [zenoh documentation](http://zenoh.io/docs/manual/backends/) for more details.
 
-This backend relies on [RocksDB](https://rocksdb.org/) to implement the storages.
-Its library name (without OS specific prefix and extension) that zenoh will rely on to find it and load it is **`zenoh_backend_rocksdb`**.
+This backend relies on [Sqlite](https://sqlite.org/) to implement the storages.
+Its library name (without OS specific prefix and extension) that zenoh will rely on to find it and load it is **`zenoh_backend_sqlite`**.
 
 :point_right: **Install latest release:** see [below](#How-to-install-it)
 
@@ -31,9 +31,9 @@ Its library name (without OS specific prefix and extension) that zenoh will rely
 ## **Examples of usage**
 
 Prerequisites:
- - You have a zenoh router (`zenohd`) installed, and the `zenoh_backend_rocksdb` library file is available in `~/.zenoh/lib`.
- - Declare the `ZENOH_BACKEND_ROCKSDB_ROOT` environment variable to the directory where you want the RocksDB databases
-   to be stored. If you don't declare it, the `~/.zenoh/zenoh_backend_rocksdb` directory will be used.
+ - You have a zenoh router (`zenohd`) installed, and the `zenoh_backend_sqlite` library file is available in `~/.zenoh/lib`.
+ - Declare the `ZENOH_BACKEND_SQLITE_ROOT` environment variable to the directory where you want the Sqlite databases
+   to be stored. If you don't declare it, the `~/.zenoh/zenoh_backend_sqlite` directory will be used.
 
 You can setup storages either at zenoh router startup via a configuration file, either at runtime via the zenoh admin space, using for instance the REST API.
 
@@ -46,11 +46,11 @@ You can setup storages either at zenoh router startup via a configuration file, 
         // configuration of "storages" plugin:
         storage_manager: {
           volumes: {
-            // configuration of a "rocksdb" volume (the "zenoh_backend_rocksdb" backend library will be loaded at startup)
-            rocksdb: {}
+            // configuration of a "sqlite" volume (the "zenoh_backend_sqlite" backend library will be loaded at startup)
+            sqlite: {}
           },
           storages: {
-            // configuration of a "demo" storage using the "rocksdb" volume
+            // configuration of a "demo" storage using the "sqlite" volume
             demo: {
               // the key expression this storage will subscribes to
               key_expr: "demo/example/**",
@@ -58,10 +58,10 @@ You can setup storages either at zenoh router startup via a configuration file, 
               // i.e.: "demo/example/a/b" will be stored as "a/b"
               strip_prefix: "demo/example",
               volume: {
-                id: "rocksdb",
-                // the RocksDB database will be stored in this directory (relative to ${ZENOH_BACKEND_ROCKSDB_ROOT})
+                id: "sqlite",
+                // the Sqlite database will be stored in this directory (relative to ${ZENOH_BACKEND_SQLITE_ROOT})
                 dir: "example",
-                // create the RocksDB database if not already existing
+                // create the Sqlite database if not already existing
                 create_db: true
               }
             }
@@ -72,23 +72,23 @@ You can setup storages either at zenoh router startup via a configuration file, 
       }
     }
     ```
-  - Run the zenoh router with:  
+  - Run the zenoh router with:
     `zenohd -c zenoh.json5`
 
 ### **Setup at runtime via `curl` commands on the admin space**
 
-  - Run the zenoh router, with write permissions to its admin space:  
+  - Run the zenoh router, with write permissions to its admin space:
     `zenohd --adminspace-permissions rw`
-  - Add the "rocksdb" backend (the "zenoh_backend_rocksdb" library will be loaded):  
-   `curl -X PUT -H 'content-type:application/json' -d '{}' http://localhost:8000/@/router/local/config/plugins/storage_manager/volumes/rocksdb`
-  - Add the "demo" storage using the "rocksdb" backend:  
-   `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"demo/example/**",strip_prefix:"demo/example",volume: {id: "rocksdb",dir: "example",create_db: true}}' http://localhost:8000/@/router/local/config/plugins/storage_manager/storages/demo`
+  - Add the "sqlite" backend (the "zenoh_backend_sqlite" library will be loaded):
+   `curl -X PUT -H 'content-type:application/json' -d '{}' http://localhost:8000/@/router/local/config/plugins/storage_manager/volumes/sqlite`
+  - Add the "demo" storage using the "sqlite" backend:
+   `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"demo/example/**",strip_prefix:"demo/example",volume: {id: "sqlite",dir: "example",create_db: true}}' http://localhost:8000/@/router/local/config/plugins/storage_manager/storages/demo`
 
 ### **Tests using the REST API**
 
 Using `curl` to publish and query keys/values, you can:
 ```bash
-# Put values that will be stored in the RocksDB database
+# Put values that will be stored in the Sqlite database
 curl -X PUT -d "TEST-1" http://localhost:8000/demo/example/test-1
 curl -X PUT -d "B" http://localhost:8000/demo/example/a/b
 
@@ -98,14 +98,14 @@ curl http://localhost:8000/demo/example/**
 
 -------------------------------
 ## Volume-specific storage configuration
-Storages relying on a RocksDB-backed volume must specify some additional configuration as shown [above](#setup-via-a-json5-configuration-file):
-- **`"dir"`** (**required**, string) : The name of directory where the RocksDB database is stored.
-  The absolute path will be `${ZENOH_BACKEND_ROCKSDB_ROOT}/<dir>`.
+Storages relying on a Sqlite-backed volume must specify some additional configuration as shown [above](#setup-via-a-json5-configuration-file):
+- **`"dir"`** (**required**, string) : The name of directory where the Sqlite database is stored.
+  The absolute path will be `${ZENOH_BACKEND_SQLITE_ROOT}/<dir>`.
 
-- **`"create_db"`** (optional, boolean) : create the RocksDB database if not already existing. Not set by default.
+- **`"create_db"`** (optional, boolean) : create the Sqlite database if not already existing. Not set by default.
   *(the value doesn't matter, only the property existence is checked)*
 
-- **`"read_only"`** (optional, boolean) : the storage will only answer to GET queries. It will not accept any PUT or DELETE message, and won't put anything in RocksDB database. Not set by default. *(the value doesn't matter, only the property existence is checked)*
+- **`"read_only"`** (optional, boolean) : the storage will only answer to GET queries. It will not accept any PUT or DELETE message, and won't put anything in Sqlite database. Not set by default. *(the value doesn't matter, only the property existence is checked)*
 
 - **`"on_closure"`** (optional, string) : the strategy to use when the Storage is removed. There are 2 options:
   - *unset*: the database remains untouched (this is the default behaviour)
@@ -114,17 +114,17 @@ Storages relying on a RocksDB-backed volume must specify some additional configu
 -------------------------------
 ## **Behaviour of the backend**
 
-### Mapping to RocksDB database
-Each **storage** will map to a RocksDB database stored in directory: `${ZENOH_BACKEND_ROCKSDB_ROOT}/<dir>`, where:
-  * `${ZENOH_BACKEND_ROCKSDB_ROOT}` is an environment variable that could be specified before zenoh router startup.
-     If this variable is not specified `${ZENOH_HOME}/zenoh_backend_rocksdb` will be used
+### Mapping to Sqlite database
+Each **storage** will map to a Sqlite database stored in directory: `${ZENOH_BACKEND_SQLITE_ROOT}/<dir>`, where:
+  * `${ZENOH_BACKEND_SQLITE_ROOT}` is an environment variable that could be specified before zenoh router startup.
+     If this variable is not specified `${ZENOH_HOME}/zenoh_backend_sqlite` will be used
      (where the default value of `${ZENOH_HOME}` is `~/.zenoh`).
   * `<dir>` is the `"dir"` property specified at storage creation.
 Each zenoh **key/value** put into the storage will map to 2 **key/values** in the database:
   * For both, the database key is the zenoh key, stripped from the `"strip_prefix"` property specified at storage creation.
-  * In the `"default"` [Column Family](https://github.com/facebook/rocksdb/wiki/Column-Families) the key is
+  * In the `"default"` [Column Family](https://github.com/facebook/sqlite/wiki/Column-Families) the key is
     put with the zenoh encoded value as a value.
-  * In the `"data_info"` [Column Family](https://github.com/facebook/rocksdb/wiki/Column-Families) the key is
+  * In the `"data_info"` [Column Family](https://github.com/facebook/sqlite/wiki/Column-Families) the key is
     put with a bytes buffer encoded in this order:
       - the Timestamp encoded as: 8 bytes for the time + 16 bytes for the HLC ID
       - a "is deleted" flag encoded as a boolean on 1 byte
@@ -134,15 +134,15 @@ Each zenoh **key/value** put into the storage will map to 2 **key/values** in th
 ### Behaviour on deletion
 On deletion of a key, the corresponding key is removed from the `"default"` Column Family. An entry with the
 "deletion" flag set to true and the deletion timestamp is inserted in the `"data-info"` Column Family
-(to avoid re-insertion of points with an older timestamp in case of un-ordered messages).  
+(to avoid re-insertion of points with an older timestamp in case of un-ordered messages).
 At regular interval, a task cleans-up the `"data-info"` Column Family from entries with old timestamps and
 the "deletion" flag set to true
 
 ### Behaviour on GET
 On GET operations:
   * if the selector is a unique key (i.e. not containing any `'*'`): the value and its encoding and timestamp
-    for the corresponding key are directly retrieved from the 2 Column Families using `get` RocksDB operation.
-  * if the selector is a key expression: the storage searches for matching keys, leveraging RocksDB's [Prefix Seek](https://github.com/facebook/rocksdb/wiki/Prefix-Seek) if possible to minimize the number of entries to check.
+    for the corresponding key are directly retrieved from the 2 Column Families using `get` Sqlite operation.
+  * if the selector is a key expression: the storage searches for matching keys, leveraging Sqlite's [Prefix Seek](https://github.com/facebook/sqlite/wiki/Prefix-Seek) if possible to minimize the number of entries to check.
 
 -------------------------------
 ## How to install it
@@ -151,22 +151,22 @@ To install the latest release of this backend library, you can do as follows:
 
 ### Manual installation (all platforms)
 
-All release packages can be downloaded from:  
- - https://download.eclipse.org/zenoh/zenoh-backend-rocksdb/latest/   
+All release packages can be downloaded from:
+ - https://download.eclipse.org/zenoh/zenoh-backend-sqlite/latest/
 
 Each subdirectory has the name of the Rust target. See the platforms each target corresponds to on https://doc.rust-lang.org/stable/rustc/platform-support.html
 
-Choose your platform and download the `.zip` file.  
+Choose your platform and download the `.zip` file.
 Unzip it in the same directory than `zenohd` or to any directory where it can find the backend library (e.g. /usr/lib or ~/.zenoh/lib)
 
 ### Linux Debian
 
-Add Eclipse Zenoh private repository to the sources list, and install the `zenoh-backend-rocksdb` package:
+Add Eclipse Zenoh private repository to the sources list, and install the `zenoh-backend-sqlite` package:
 
 ```bash
 echo "deb [trusted=yes] https://download.eclipse.org/zenoh/debian-repo/ /" | sudo tee -a /etc/apt/sources.list.d/zenoh.list > /dev/null
 sudo apt update
-sudo apt install zenoh-backend-rocksdb
+sudo apt install zenoh-backend-sqlite
 ```
 
 -------------------------------
@@ -178,19 +178,19 @@ At first, install [Clang](https://clang.llvm.org/) and [Cargo and Rust](https://
 
 ```bash
 $ rustup update
-``` 
+```
 
 > :warning: **WARNING** :warning: : As Rust doesn't have a stable ABI, the backend library should be
 built with the exact same Rust version than `zenohd`, and using for `zenoh` dependency the same version (or commit number) than 'zenohd'.
 Otherwise, incompatibilities in memory mapping of shared types between `zenohd` and the library can lead to a `"SIGSEV"` crash.
 
-To know the Rust version you're `zenohd` has been built with, use the `--version` option.  
+To know the Rust version you're `zenohd` has been built with, use the `--version` option.
 Example:
 ```bash
 $ zenohd --version
 The zenoh router v0.6.0-beta.1 built with rustc 1.64.0 (a55dd71d5 2022-09-19)
 ```
-Here, `zenohd` has been built with the rustc version `1.64.0`.  
+Here, `zenohd` has been built with the rustc version `1.64.0`.
 Install and use this toolchain with the following command:
 
 ```bash

@@ -12,9 +12,9 @@
 #   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 #
 [package]
-name = "zenoh-backend-rocksdb"
+name = "zenoh-backend-sqlite"
 version = "0.11.0-dev"
-repository = "https://github.com/eclipse-zenoh/zenoh-backend-rocksdb"
+repository = "https://github.com/eclipse-zenoh/zenoh-backend-sqlite"
 homepage = "http://zenoh.io"
 authors = [
   "kydos <angelo@icorsaro.net>",
@@ -26,10 +26,10 @@ authors = [
 edition = "2021"
 license = "EPL-2.0 OR Apache-2.0"
 categories = ["network-programming", "database"]
-description = "Backend for Zenoh using RocksDB"
+description = "Backend for Zenoh using sqlite3"
 
 [lib]
-name = "zenoh_backend_rocksdb"
+name = "zenoh_backend_sqlite"
 crate-type = ["cdylib", "rlib"]
 
 [features]
@@ -42,7 +42,7 @@ env_logger = "0.10.0"
 git-version = "0.3.5"
 lazy_static = "1.4.0"
 log = "0.4.17"
-rocksdb = "0.20.1"
+rusqlite = "0.31.0"
 serde_json = "1.0.94"
 uhlc = "0.5.2"
 zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main", features = [
@@ -61,7 +61,7 @@ zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = 
 rustc_version = "0.4.0"
 
 [package.metadata.deb]
-name = "zenoh-backend-rocksdb"
+name = "zenoh-backend-sqlite"
 maintainer = "zenoh-dev@eclipse.org"
 copyright = "2022 ZettaScale Technology"
 section = "net"

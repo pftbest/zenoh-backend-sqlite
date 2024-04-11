@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # For Windows, install llvm and use a workaround to resolve link error with C:\msys64\mingw64\bin\libclang.dll
-      # Credits: https://github.com/rust-rocksdb/rust-rocksdb/pull/484
+      # Credits: https://github.com/rust-sqlite/rust-sqlite/pull/484
       - name: Remove msys64
         if: runner.os == 'Windows'
         run: Remove-Item -LiteralPath "C:\msys64\" -Force -Recurse
