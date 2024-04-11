@@ -19,6 +19,7 @@ use rusqlite::params;
 use rusqlite::Connection;
 use rusqlite::OpenFlags;
 use std::collections::HashMap;
+use async_std::fs;
 use std::path::PathBuf;
 use zenoh::buffers::{reader::HasReader, writer::HasWriter};
 use zenoh::prelude::*;
@@ -138,7 +139,7 @@ impl Volume for SqliteVolume {
             }
         };
 
-        let db_path = match volume_cfg.get(PROP_STORAGE_DIR) {
+        let mut db_path = match volume_cfg.get(PROP_STORAGE_DIR) {
             Some(serde_json::Value::String(dir)) => {
                 let mut db_path = self.root.clone();
                 db_path.push(dir);
@@ -152,6 +153,9 @@ impl Volume for SqliteVolume {
             }
         };
 
+        fs::create_dir_all(&db_path).await?;
+        db_path.push("zenoh.db");
+
         let conn = Connection::open_with_flags(
             db_path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -162,8 +166,8 @@ impl Volume for SqliteVolume {
         conn.execute("PRAGMA journal_mode=WAL;", [])?;
         conn.execute("PRAGMA synchronous=2;", [])?;
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS Parameters (key text unique, payload BLOB, info BLOB)",
-            (),
+            "CREATE TABLE IF NOT EXISTS Parameters (key text unique, payload BLOB, info BLOB);",
+            [],
         )?;
 
         let db = Arc::new(Mutex::new(Some(conn)));
@@ -359,7 +363,7 @@ fn put_kv(
     };
 
     db.execute(
-        "REPLACE INTO Parameters (key, payload, info) VALUES (?1,?2,?3)",
+        "REPLACE INTO Parameters (key, payload, info) VALUES (?1,?2,?3);",
         params![
             key.as_str(),
             value.payload.contiguous(),
@@ -376,7 +380,7 @@ fn delete_kv(db: &Connection, key: Option<OwnedKeyExpr>) -> ZResult<StorageInser
         Some(k) => k.to_string(),
         None => NONE_KEY.to_string(),
     };
-    db.execute("DELETE FROM Parameters WHERE key = (?1)", [key.as_str()])?;
+    db.execute("DELETE FROM Parameters WHERE key = (?1);", [key.as_str()])?;
     Ok(StorageInsertionResult::Deleted)
 }
 
