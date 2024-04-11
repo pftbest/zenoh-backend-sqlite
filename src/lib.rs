@@ -163,8 +163,8 @@ impl Volume for SqliteVolume {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
 
-        conn.execute("PRAGMA journal_mode=WAL;", [])?;
-        conn.execute("PRAGMA synchronous=2;", [])?;
+        let _ = conn.execute("PRAGMA journal_mode=WAL;", []);
+        let _ = conn.execute("PRAGMA synchronous=2;", []);
         conn.execute(
             "CREATE TABLE IF NOT EXISTS Parameters (key text unique, payload BLOB, info BLOB);",
             [],
