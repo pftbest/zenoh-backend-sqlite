@@ -12,6 +12,7 @@
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
 
+use async_std::fs;
 use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
@@ -19,7 +20,6 @@ use rusqlite::params;
 use rusqlite::Connection;
 use rusqlite::OpenFlags;
 use std::collections::HashMap;
-use async_std::fs;
 use std::path::PathBuf;
 use zenoh::buffers::{reader::HasReader, writer::HasWriter};
 use zenoh::prelude::*;
