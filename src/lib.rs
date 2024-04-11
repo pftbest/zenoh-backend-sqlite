@@ -283,7 +283,7 @@ impl Storage for SqliteStorage {
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
-        let mut stmt = db.prepare("SELECT (key, info) FROM Parameters")?;
+        let mut stmt = db.prepare("SELECT key, info FROM Parameters")?;
         let iter = stmt.query_map([], |row| {
             Ok(KeyInfo {
                 key: row.get(0)?,
@@ -391,7 +391,7 @@ fn get_kv(db: &Connection, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, 
         None => NONE_KEY.to_string(),
     };
 
-    let mut stmt = db.prepare("SELECT (payload, info) FROM Parameters WHERE key = (?1)")?;
+    let mut stmt = db.prepare("SELECT payload, info FROM Parameters WHERE key = (?1)")?;
     let res = stmt.query_row([key.as_str()], |row| {
         Ok(PayloadInfo {
             payload: row.get(0)?,
