@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use rusqlite::params;
 use rusqlite::Connection;
+use rusqlite::OpenFlags;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use zenoh::buffers::{reader::HasReader, writer::HasWriter};
@@ -151,7 +152,13 @@ impl Volume for SqliteVolume {
             }
         };
 
-        let conn = Connection::open(db_path)?;
+        let conn = Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+
         conn.execute("PRAGMA journal_mode=WAL;", [])?;
         conn.execute("PRAGMA synchronous=2;", [])?;
         conn.execute(
