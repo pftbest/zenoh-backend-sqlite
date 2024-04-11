@@ -42,7 +42,6 @@ env_logger = "0.10.0"
 git-version = "0.3.5"
 lazy_static = "1.4.0"
 log = "0.4.17"
-rusqlite = "0.31.0"
 serde_json = "1.0.94"
 uhlc = "0.5.2"
 zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main", features = [
@@ -56,6 +55,12 @@ zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+rusqlite = { version = "0.31.0", features = ["bundled"] }
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+rusqlite = { version = "0.31.0" }
 
 [build-dependencies]
 rustc_version = "0.4.0"
