@@ -1,5 +1,6 @@
 //
 // Copyright (c) 2022 ZettaScale Technology
+// Copyright (c) 2024 Vadzim Dambrouski
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License 2.0 which is available at
@@ -10,52 +11,66 @@
 //
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
+//   Vadzim Dambrouski, <pftbest@gmail.com>
 //
 
-use async_std::fs;
-use async_std::sync::{Arc, Mutex};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
-use log::{debug, error, trace, warn};
-use rusqlite::params;
-use rusqlite::Connection;
-use rusqlite::OpenFlags;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use zenoh::buffers::{reader::HasReader, writer::HasWriter};
-use zenoh::prelude::*;
-use zenoh::properties::Properties;
+use rusqlite::{params, Connection};
+use tracing::{debug, error, trace};
+use zenoh::buffers::buffer::SplitBuffer;
+use zenoh::buffers::reader::HasReader;
+use zenoh::buffers::writer::HasWriter;
+use zenoh::key_expr::OwnedKeyExpr;
+use zenoh::prelude::Sample;
 use zenoh::time::Timestamp;
-use zenoh::Result as ZResult;
+use zenoh::value::Value;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
-use zenoh_backend_traits::*;
+use zenoh_backend_traits::{
+    Capability, History, Persistence, Storage, StorageInsertionResult, StoredData, Volume,
+    VolumeInstance, ZResult,
+};
 use zenoh_codec::{RCodec, WCodec, Zenoh080};
-use zenoh_core::{bail, zerror};
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
 use zenoh_util::zenoh_home;
 
 /// The environment variable used to configure the root of all storages managed by this sqlite backend.
-pub const SCOPE_ENV_VAR: &str = "ZENOH_BACKEND_SQLITE_ROOT";
+const SCOPE_ENV_VAR: &str = "ZENOH_BACKEND_SQLITE_ROOT";
 
-/// The default root (whithin zenoh's home directory) if the ZENOH_BACKEND_SQLITE_ROOT environment variable is not specified.
-pub const DEFAULT_ROOT_DIR: &str = "zenoh_backend_sqlite";
+/// The default root (within zenoh's home directory) if the ZENOH_BACKEND_SQLITE_ROOT environment variable is not specified.
+const DEFAULT_ROOT_DIR: &str = "zenoh_backend_sqlite";
+
+const DEFAULT_FILE_NAME: &str = "zenoh.db";
+
+const CREATE_TABLE_STMT: &str = r#"
+CREATE TABLE IF NOT EXISTS zenoh_storage (
+    key TEXT PRIMARY KEY,
+    payload BLOB,
+    encoding TEXT,
+    timestamp BLOB
+) WITHOUT ROWID;
+"#;
 
 // Properties used by the Backend
 //  - None
 
 // Properties used by the Storage
-pub const PROP_STORAGE_DIR: &str = "dir";
-pub const PROP_STORAGE_READ_ONLY: &str = "read_only";
-pub const PROP_STORAGE_ON_CLOSURE: &str = "on_closure";
+const PROP_STORAGE_DIR: &str = "dir";
+const PROP_STORAGE_READ_ONLY: &str = "read_only";
+const PROP_STORAGE_ON_CLOSURE: &str = "on_closure";
 
 // Special key for None (when the prefix being stripped exactly matches the key)
-pub const NONE_KEY: &str = "@@none_key@@";
+const NONE_KEY: &str = "@@none_key@@";
 
-pub(crate) enum OnClosure {
+enum OnClosure {
     DestroyDB,
     DoNothing,
 }
 
-pub struct SqliteBackend {}
+struct SqliteBackend;
 zenoh_plugin_trait::declare_plugin!(SqliteBackend);
 
 impl Plugin for SqliteBackend {
@@ -66,42 +81,34 @@ impl Plugin for SqliteBackend {
     const PLUGIN_VERSION: &'static str = plugin_version!();
     const PLUGIN_LONG_VERSION: &'static str = plugin_long_version!();
 
-    fn start(_name: &str, _config: &Self::StartArgs) -> ZResult<Self::Instance> {
-        // For some reasons env_logger is sometime not active in a loaded library.
-        // Try to activate it here, ignoring failures.
-        let _ = env_logger::try_init();
-        debug!("Sqlite backend {}", Self::PLUGIN_LONG_VERSION);
-
-        let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
+    fn start(_name: &str, _args: &VolumeConfig) -> ZResult<VolumeInstance> {
+        let root_dir = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
             PathBuf::from(dir)
         } else {
             let mut dir = PathBuf::from(zenoh_home());
             dir.push(DEFAULT_ROOT_DIR);
             dir
         };
-        let mut properties = Properties::default();
-        properties.insert("root".into(), root.to_string_lossy().into());
-        properties.insert("version".into(), Self::PLUGIN_VERSION.into());
-
-        let admin_status = HashMap::from(properties)
-            .into_iter()
-            .map(|(k, v)| (k, serde_json::Value::String(v)))
-            .collect();
-        Ok(Box::new(SqliteVolume { admin_status, root }))
+        Ok(Box::new(SqliteVolume { root_dir }))
     }
 }
 
-pub struct SqliteVolume {
-    admin_status: serde_json::Value,
-    root: PathBuf,
+struct SqliteVolume {
+    root_dir: PathBuf,
 }
 
 #[async_trait]
 impl Volume for SqliteVolume {
+    /// Returns the status that will be sent as a reply to a query
+    /// on the administration space for this backend.
     fn get_admin_status(&self) -> serde_json::Value {
-        self.admin_status.clone()
+        let mut map = serde_json::Map::new();
+        map.insert("root".into(), self.root_dir.to_string_lossy().into());
+        map.insert("version".into(), SqliteBackend::PLUGIN_VERSION.into());
+        map.into()
     }
 
+    /// Returns the capability of this backend
     fn get_capability(&self) -> Capability {
         Capability {
             persistence: Persistence::Durable,
@@ -110,338 +117,350 @@ impl Volume for SqliteVolume {
         }
     }
 
-    async fn create_storage(&self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
-        let volume_cfg = match config.volume_cfg.as_object() {
+    /// Creates a storage configured with some properties.
+    async fn create_storage(&self, props: StorageConfig) -> ZResult<Box<dyn Storage>> {
+        let volume_cfg = match props.volume_cfg.as_object() {
             Some(v) => v,
-            None => bail!("sqlite backed storages need volume-specific configurations"),
+            None => Err("sqlite backed storages need volume-specific configurations")?,
         };
 
         let read_only = match volume_cfg.get(PROP_STORAGE_READ_ONLY) {
             None | Some(serde_json::Value::Bool(false)) => false,
             Some(serde_json::Value::Bool(true)) => true,
-            _ => {
-                bail!(
-                    "Optional property `{}` of sqlite storage configurations must be a boolean",
-                    PROP_STORAGE_READ_ONLY
-                )
-            }
+            _ => Err(format!(
+                "Optional property `{}` of sqlite storage configurations must be a boolean",
+                PROP_STORAGE_READ_ONLY
+            ))?,
         };
 
         let on_closure = match volume_cfg.get(PROP_STORAGE_ON_CLOSURE) {
             Some(serde_json::Value::String(s)) if s == "destroy_db" => OnClosure::DestroyDB,
             Some(serde_json::Value::String(s)) if s == "do_nothing" => OnClosure::DoNothing,
             None => OnClosure::DoNothing,
-            _ => {
-                bail!(
-                    r#"Optional property `{}` of sqlite storage configurations must be either "do_nothing" (default) or "destroy_db""#,
-                    PROP_STORAGE_ON_CLOSURE
-                )
-            }
+            _ => Err(format!(
+                r#"Optional property `{}` of sqlite storage configurations must be either "do_nothing" (default) or "destroy_db""#,
+                PROP_STORAGE_ON_CLOSURE
+            ))?,
         };
 
         let mut db_path = match volume_cfg.get(PROP_STORAGE_DIR) {
             Some(serde_json::Value::String(dir)) => {
-                let mut db_path = self.root.clone();
+                let mut db_path = self.root_dir.clone();
                 db_path.push(dir);
                 db_path
             }
-            _ => {
-                bail!(
-                    r#"Required property `{}` for File System Storage must be a string"#,
-                    PROP_STORAGE_DIR
-                )
-            }
+            _ => Err(format!(
+                r#"Required property `{}` for File System Storage must be a string"#,
+                PROP_STORAGE_DIR
+            ))?,
         };
 
-        fs::create_dir_all(&db_path).await?;
-        db_path.push("zenoh.db");
+        debug!("Creating directory for sqlite storage at: {:?}", db_path);
+        fs::create_dir_all(&db_path)?;
 
-        let conn = Connection::open_with_flags(
-            db_path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        // Append the file name to the path
+        db_path.push(DEFAULT_FILE_NAME);
 
-        let _ = conn.execute("PRAGMA journal_mode=WAL;", []);
-        let _ = conn.execute("PRAGMA synchronous=2;", []);
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS Parameters (key text unique, payload BLOB, info BLOB);",
-            [],
-        )?;
-
-        let db = Arc::new(Mutex::new(Some(conn)));
-
-        Ok(Box::new(SqliteStorage {
-            config,
-            on_closure,
-            read_only,
-            db,
-        }))
+        debug!("Creating sqlite storage at: {:?}", db_path);
+        let storage = SqliteStorage::new(&db_path, props.to_json_value(), read_only, on_closure)?;
+        Ok(Box::new(storage))
     }
 
+    /// Returns an interceptor that will be called before pushing any data
+    /// into a storage created by this backend. `None` can be returned for no interception point.
     fn incoming_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
         None
     }
 
+    /// Returns an interceptor that will be called before sending any reply
+    /// to a query from a storage created by this backend. `None` can be returned for no interception point.
     fn outgoing_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
         None
     }
 }
 
 struct SqliteStorage {
-    config: StorageConfig,
-    on_closure: OnClosure,
+    admin_status: serde_json::Value,
     read_only: bool,
-    // Note: sqlite isn't thread-safe. See https://github.com/rust-sqlite/rust-sqlite/issues/404
+    on_closure: OnClosure,
     db: Arc<Mutex<Option<Connection>>>,
 }
 
-struct PayloadInfo {
-    payload: Vec<u8>,
-    info: Vec<u8>,
+impl SqliteStorage {
+    pub(crate) fn new(
+        db_path: &Path,
+        admin_status: serde_json::Value,
+        read_only: bool,
+        on_closure: OnClosure,
+    ) -> ZResult<Self> {
+        let mut connection = Connection::open(db_path)?;
+
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "FULL")?;
+
+        trace!("Creating table if not exists");
+        let tx = connection.transaction()?;
+        tx.execute(CREATE_TABLE_STMT, ())?;
+        tx.commit()?;
+
+        let db = Arc::new(Mutex::new(Some(connection)));
+        Ok(Self {
+            admin_status,
+            read_only,
+            on_closure,
+            db,
+        })
+    }
 }
 
-struct KeyInfo {
-    key: String,
-    info: Vec<u8>,
+impl Drop for SqliteStorage {
+    fn drop(&mut self) {
+        if let Ok(mut db) = self.db.lock() {
+            if let Some(conn) = db.take() {
+                // Save the path before closing the connection
+                let path = conn.path().unwrap_or("").to_owned();
+                if let Err(e) = conn.close() {
+                    error!("Error closing connection: {:?}", e);
+                }
+                if matches!(self.on_closure, OnClosure::DestroyDB) {
+                    if path.is_empty() {
+                        error!("No path for db file, unable to remove it");
+                        return;
+                    }
+                    debug!("Removing the db file: {:?}", path);
+                    if let Err(e) = fs::remove_file(path) {
+                        error!("Error removing db file: {:?}", e);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl Storage for SqliteStorage {
+    /// Returns the status that will be sent as a reply to a query
+    /// on the administration space for this storage.
     fn get_admin_status(&self) -> serde_json::Value {
-        self.config.to_json_value()
+        self.admin_status.clone()
     }
 
-    // When receiving a PUT operation
+    /// Function called for each incoming data ([`Sample`]) to be stored in this storage.
+    /// A key can be `None` if it matches the `strip_prefix` exactly.
+    /// In order to avoid data loss, the storage must store the `value` and `timestamp` associated with the `None` key
+    /// in a manner suitable for the given backend technology
     async fn put(
         &mut self,
         key: Option<OwnedKeyExpr>,
         value: Value,
         timestamp: Timestamp,
     ) -> ZResult<StorageInsertionResult> {
-        // Get lock on DB
-        let db_cell = self.db.lock().await;
-        let db = db_cell.as_ref().unwrap();
+        let mut db_cell = self.db.lock().unwrap();
+        let db = db_cell.as_mut().unwrap();
 
-        // Store the sample
-        debug!(
-            "Storing key, and value with timestamp: {:?} : {}",
-            key, timestamp
-        );
+        let key = match key {
+            Some(k) => k.to_string(),
+            None => NONE_KEY.to_owned(),
+        };
+
+        trace!("Putting key {:?} with timestamp {:?}", key, timestamp);
+
         if !self.read_only {
-            // put payload and data_info in DB
-            put_kv(db, key, value, timestamp)
+            match set_value(db, &key, value, timestamp) {
+                Ok(_) => Ok(StorageInsertionResult::Inserted),
+                Err(e) => Err(format!("Error when inserting key {:?} : {}", key, e).into()),
+            }
         } else {
-            warn!("Received PUT for read-only DB on {:?} - ignored", key);
+            error!("Received PUT for read-only DB on {:?} - ignored", key);
             Err("Received update for read-only DB".into())
         }
     }
 
-    // When receiving a DEL operation
+    /// Function called for each incoming delete request to this storage.
+    /// A key can be `None` if it matches the `strip_prefix` exactly.
+    /// In order to avoid data loss, the storage must delete the entry corresponding to the `None` key
+    /// in a manner suitable for the given backend technology
     async fn delete(
         &mut self,
         key: Option<OwnedKeyExpr>,
-        _timestamp: Timestamp,
+        timestamp: Timestamp,
     ) -> ZResult<StorageInsertionResult> {
-        // Get lock on DB
-        let db_cell = self.db.lock().await;
-        let db = db_cell.as_ref().unwrap();
+        let mut db_cell = self.db.lock().unwrap();
+        let db = db_cell.as_mut().unwrap();
 
-        debug!("Deleting key: {:?}", key);
+        let key = match key {
+            Some(k) => k.to_string(),
+            None => NONE_KEY.to_owned(),
+        };
+
+        trace!("Deleting key {:?} with timestamp {:?}", key, timestamp);
+
         if !self.read_only {
-            // delete file
-            delete_kv(db, key)
+            match delete_value(db, &key) {
+                Ok(_) => Ok(StorageInsertionResult::Deleted),
+                Err(e) => Err(format!("Error when deleting key {:?} : {}", key, e).into()),
+            }
         } else {
-            warn!("Received DELETE for read-only DB on {:?} - ignored", key);
+            error!("Received DELETE for read-only DB on {:?} - ignored", key);
             Err("Received update for read-only DB".into())
         }
     }
 
-    // When receiving a GET operation
+    /// Function to retrieve the sample associated with a single key.
+    /// A key can be `None` if it matches the `strip_prefix` exactly.
+    /// In order to avoid data loss, the storage must retrieve the `value` and `timestamp` associated with the `None` key
+    /// in a manner suitable for the given backend technology
     async fn get(
         &mut self,
         key: Option<OwnedKeyExpr>,
-        _parameters: &str,
+        parameters: &str,
     ) -> ZResult<Vec<StoredData>> {
-        // Get lock on DB
-        let db_cell = self.db.lock().await;
+        let db_cell = self.db.lock().unwrap();
         let db = db_cell.as_ref().unwrap();
 
-        // Get the matching key/value
-        debug!("getting key `{:?}` with parameters `{}`", key, _parameters);
-        match get_kv(db, key.clone()) {
-            Ok(Some((value, timestamp))) => Ok(vec![StoredData { value, timestamp }]),
+        let key = match key {
+            Some(k) => k.to_string(),
+            None => NONE_KEY.to_owned(),
+        };
+
+        trace!("Getting key {:?} with parameters {:?}", key, parameters);
+
+        match get_value(db, &key) {
+            Ok(Some(data)) => Ok(vec![data]),
             Ok(None) => Ok(vec![]),
             Err(e) => Err(format!("Error when getting key {:?} : {}", key, e).into()),
         }
     }
 
+    /// Function called to get the list of all storage content (key, timestamp)
+    /// The latest Timestamp corresponding to each key is either the timestamp of the delete or put whichever is the latest.
+    /// Remember to fetch the entry corresponding to the `None` key
     async fn get_all_entries(&self) -> ZResult<Vec<(Option<OwnedKeyExpr>, Timestamp)>> {
-        let mut result = Vec::new();
-
-        let db_cell = self.db.lock().await;
+        let db_cell = self.db.lock().unwrap();
         let db = db_cell.as_ref().unwrap();
 
-        let mut stmt = db.prepare("SELECT key, info FROM Parameters")?;
+        let mut stmt = db.prepare("SELECT key, timestamp FROM zenoh_storage")?;
         let iter = stmt.query_map([], |row| {
-            Ok(KeyInfo {
-                key: row.get(0)?,
-                info: row.get(1)?,
-            })
+            let key: String = row.get(0)?;
+            let timestamp: Vec<u8> = row.get(1)?;
+            Ok((key, timestamp))
         })?;
 
+        let mut result = Vec::new();
         for item in iter {
-            let item = item?;
-            trace!("item ok");
-            let (_, timestamp, deleted) = decode_data_info(&item.info)?;
-            if !deleted {
-                let key = if item.key == NONE_KEY {
-                    None
-                } else {
-                    match OwnedKeyExpr::new(item.key.as_str()) {
-                        Ok(ke) => Some(ke),
-                        Err(e) => bail!("Invalid key in database: '{}' - {}", item.key, e),
-                    }
-                };
-                result.push((key, timestamp));
-            }
+            let (k, t) = item?;
+            trace!("Found item, key: {:?}", k);
+            let key = if k == NONE_KEY {
+                None
+            } else {
+                Some(OwnedKeyExpr::new(k)?)
+            };
+            let timestamp = decode_timestamp(&t)?;
+            result.push((key, timestamp));
         }
         Ok(result)
     }
 }
 
-impl Drop for SqliteStorage {
-    fn drop(&mut self) {
-        async_std::task::block_on(async move {
-            // Get lock on DB and take DB so we can drop it before destroying it
-            // (avoiding Sqlite lock to be taken twice)
-            let mut db_cell = self.db.lock().await;
-            let db = db_cell.take().unwrap();
-
-            // Flush all
-            if let Err(err) = db.cache_flush() {
-                warn!("Closing Sqlite storage, flush failed: {}", err);
-            }
-
-            // copy path for later use after DB is dropped
-            let path = db.path().unwrap_or("").to_owned();
-
-            // drop DB
-            if let Err((_, err)) = db.close() {
-                warn!("Closing Sqlite storage, flush failed: {}", err);
-            }
-
-            match self.on_closure {
-                OnClosure::DestroyDB => {
-                    debug!("Close Sqlite storage, destroying database {}", path);
-                    if path.is_empty() {
-                        error!("Failed to destroy database: empty path");
-                    } else if let Err(e) = std::fs::remove_file(&path) {
-                        error!("Failed to destroy database {}: {}", path, e);
-                    }
-                }
-                OnClosure::DoNothing => {
-                    debug!("Close Sqlite storage, keeping database {} as it is", path);
-                }
-            }
-        });
-    }
-}
-
-fn put_kv(
-    db: &Connection,
-    key: Option<OwnedKeyExpr>,
-    value: Value,
-    timestamp: Timestamp,
-) -> ZResult<StorageInsertionResult> {
-    trace!("Put key {:?} in {:?}", key, db);
-    let data_info = encode_data_info(&value.encoding, &timestamp, false)?;
-    let key = match key {
-        Some(k) => k.to_string(),
-        None => NONE_KEY.to_string(),
-    };
-
-    db.execute(
-        "REPLACE INTO Parameters (key, payload, info) VALUES (?1,?2,?3);",
-        params![
-            key.as_str(),
-            value.payload.contiguous(),
-            data_info.as_slice()
-        ],
+fn set_value(db: &mut Connection, key: &str, value: Value, timestamp: Timestamp) -> ZResult<()> {
+    let payload = value.payload.contiguous();
+    let encoding = value.encoding.to_string();
+    let timestamp = encode_timestamp(timestamp)?;
+    let tx = db.transaction()?;
+    tx.execute(
+        "INSERT OR REPLACE INTO zenoh_storage (key, payload, encoding, timestamp) VALUES (?, ?, ?, ?)",
+        params![key, &payload, &encoding, &timestamp],
     )?;
-
-    Ok(StorageInsertionResult::Inserted)
+    tx.commit()?;
+    Ok(())
 }
 
-fn delete_kv(db: &Connection, key: Option<OwnedKeyExpr>) -> ZResult<StorageInsertionResult> {
-    trace!("Delete key {:?} from {:?}", key, db);
-    let key = match key {
-        Some(k) => k.to_string(),
-        None => NONE_KEY.to_string(),
-    };
-    db.execute("DELETE FROM Parameters WHERE key = (?1);", [key.as_str()])?;
-    Ok(StorageInsertionResult::Deleted)
+fn delete_value(db: &mut Connection, key: &str) -> ZResult<()> {
+    let tx = db.transaction()?;
+    tx.execute("DELETE FROM zenoh_storage WHERE key = ?", [key])?;
+    tx.commit()?;
+    Ok(())
 }
 
-fn get_kv(db: &Connection, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestamp)>> {
-    trace!("Get key {:?} from {:?}", key, db);
-    let key = match key {
-        Some(k) => k.to_string(),
-        None => NONE_KEY.to_string(),
-    };
-
-    let mut stmt = db.prepare("SELECT payload, info FROM Parameters WHERE key = (?1)")?;
-    let res = stmt.query_row([key.as_str()], |row| {
-        Ok(PayloadInfo {
-            payload: row.get(0)?,
-            info: row.get(1)?,
-        })
-    })?;
-
-    let (encoding, timestamp, deleted) = decode_data_info(&res.info)?;
-    trace!("first ok");
-    if deleted {
-        Ok(None)
+fn get_value(db: &Connection, key: &str) -> ZResult<Option<StoredData>> {
+    let mut stmt =
+        db.prepare("SELECT payload, encoding, timestamp FROM zenoh_storage WHERE key = ?")?;
+    let mut rows = stmt.query([key])?;
+    if let Some(row) = rows.next()? {
+        let payload: Vec<u8> = row.get(0)?;
+        let encoding: String = row.get(1)?;
+        let timestamp: Vec<u8> = row.get(2)?;
+        let value = Value::new(payload.into()).encoding(encoding.into());
+        let timestamp = decode_timestamp(&timestamp)?;
+        Ok(Some(StoredData { value, timestamp }))
     } else {
-        Ok(Some((
-            Value::new(res.payload.into()).encoding(encoding),
-            timestamp,
-        )))
+        Ok(None)
     }
 }
 
-fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
-    let codec = Zenoh080::new();
-    let mut result = vec![];
-    let mut writer = result.writer();
-
-    // note: encode timestamp at first for faster decoding when only this one is required
-    codec
-        .write(&mut writer, timestamp)
-        .map_err(|_| zerror!("Failed to encode data-info (timestamp)"))?;
-    codec
-        .write(&mut writer, deleted as u8)
-        .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
-    codec
-        .write(&mut writer, encoding)
-        .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
-    Ok(result)
-}
-
-fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
+fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
     let codec = Zenoh080::new();
     let mut reader = buf.reader();
     let timestamp: Timestamp = codec
         .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
-    let deleted: u8 = codec
-        .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
-    let encoding: Encoding = codec
-        .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
-    let deleted = deleted != 0;
+        .map_err(|_| "Failed to decode timestamp")?;
+    Ok(timestamp)
+}
 
-    Ok((encoding, timestamp, deleted))
+fn encode_timestamp(timestamp: Timestamp) -> ZResult<Vec<u8>> {
+    let codec = Zenoh080::new();
+    let mut out = Vec::with_capacity(16);
+    let mut writer = out.writer();
+    codec
+        .write(&mut writer, &timestamp)
+        .map_err(|_| "Failed to encode timestamp")?;
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uhlc::ID;
+
+    #[test]
+    fn it_works() {
+        let mut storage = SqliteStorage::new(
+            Path::new(":memory:"),
+            serde_json::Value::Null,
+            false,
+            OnClosure::DoNothing,
+        )
+        .expect("failed to create storage");
+
+        // Check that the table is empty
+        let entries = smol::block_on(storage.get_all_entries()).expect("failed to get all entries");
+        assert_eq!(entries.is_empty(), true);
+
+        // Test put
+        let key = OwnedKeyExpr::new("foo/bar").expect("failed to create key");
+        let value = Value::new(vec![1, 2, 3].into()).encoding("raw".into());
+        let id: ID = ID::try_from([0x02]).unwrap();
+        let timestamp = Timestamp::new(Default::default(), id);
+        smol::block_on(storage.put(Some(key.clone()), value, timestamp)).expect("failed to put");
+
+        // Check that put succeeded
+        let entries = smol::block_on(storage.get_all_entries()).expect("failed to get all entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0.as_ref().unwrap().to_string(), "foo/bar");
+        assert_eq!(entries[0].1, timestamp);
+
+        // Test get
+        let data = smol::block_on(storage.get(Some(key.clone()), "")).expect("failed to get");
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].value.payload.contiguous(), vec![1, 2, 3]);
+        assert_eq!(data[0].value.encoding.to_string(), "raw");
+        assert_eq!(data[0].timestamp, timestamp);
+
+        // Test delete
+        smol::block_on(storage.delete(Some(key.clone()), timestamp)).expect("failed to delete");
+
+        // Check that delete succeeded
+        let entries = smol::block_on(storage.get_all_entries()).expect("failed to get all entries");
+        assert_eq!(entries.is_empty(), true);
+    }
 }

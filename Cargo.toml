@@ -1,5 +1,6 @@
 #
 # Copyright (c) 2022 ZettaScale Technology
+# Copyright (c) 2024 Vadzim Dambrouski
 #
 # This program and the accompanying materials are made available under the
 # terms of the Eclipse Public License 2.0 which is available at
@@ -10,13 +11,16 @@
 #
 # Contributors:
 #   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
+#   Vadzim Dambrouski, <pftbest@gmail.com>
 #
+
 [package]
 name = "zenoh-backend-sqlite"
 version = "0.11.0-dev"
 repository = "https://github.com/eclipse-zenoh/zenoh-backend-sqlite"
 homepage = "http://zenoh.io"
 authors = [
+  "Vadzim Dambrouski <pftbest@gmail.com>",
   "kydos <angelo@icorsaro.net>",
   "Julien Enoch <julien@enoch.fr>",
   "Olivier Hécart <olivier.hecart@zettascale.tech>",
@@ -36,25 +40,17 @@ crate-type = ["cdylib", "rlib"]
 stats = ["zenoh/stats"]
 
 [dependencies]
-async-std = "=1.12.0"
-async-trait = "0.1.66"
-env_logger = "0.10.0"
-git-version = "0.3.5"
-lazy_static = "1.4.0"
-log = "0.4.17"
-serde_json = "1.0.94"
-uhlc = "0.5.2"
-zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main", features = [
-  "unstable",
-] }
+async-trait = "0.1.80"
+git-version = "0.3.9"
+serde_json = "1.0.115"
+smol = "2.0.0"
+tracing = "0.1.40"
+uhlc = "0.7.0"
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rusqlite = { version = "0.31.0", features = ["bundled"] }
