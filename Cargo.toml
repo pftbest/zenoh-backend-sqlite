@@ -43,7 +43,6 @@ stats = ["zenoh/stats"]
 async-trait = "0.1.80"
 git-version = "0.3.9"
 serde_json = "1.0.115"
-smol = "2.0.0"
 tracing = "0.1.40"
 uhlc = "0.7.0"
 zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
@@ -57,6 +56,9 @@ rusqlite = { version = "0.31.0", features = ["bundled"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 rusqlite = { version = "0.31.0" }
+
+[dev-dependencies]
+smol = "2.0.0"
 
 [build-dependencies]
 rustc_version = "0.4.0"
